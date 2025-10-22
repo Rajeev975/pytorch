@@ -7,6 +7,7 @@ from typing import Dict, List, Tuple
 
 import torch
 import torch._dynamo
+from torch._dynamo.functional_export import dynamo_graph_capture_for_export
 from torch._dynamo.test_case import run_tests, TestCase
 from torch._functorch.aot_autograd import aot_export_module
 from torch.export import export
@@ -403,8 +404,6 @@ def forward(self, x):
         self.assertEqual(res_export, res_eager)
 
     def test_dynamo_graph_capture(self):
-        from torch._dynamo.functional_export import dynamo_graph_capture_for_export
-
         class Foo(torch.nn.Module):
             def forward(self, dct, lst, bleh):
                 x = dct["a"] * lst[1][0]
@@ -438,6 +437,22 @@ def forward(self, x):
         gm = dynamo_graph_capture_for_export(foo)(*trace_inputs)
         test_inputs = make_inputs()
         self.assertEqual(gm(*test_inputs), foo(*test_inputs))
+
+    def test_dynamo_graph_capture_closure(self):
+        from torch.export import Dim
+
+        N = 3
+
+        class MyModel(torch.nn.Module):
+            def forward(self, x):
+                y = x[:-1, :]  # [s0 - 1, 32]
+                stacked = torch.stack([y] * N, dim=0)  # [N * (s0 - 1), 32]
+                reshaped = stacked.reshape(-1, N, 32)  # [(s0 - 1), N, 32]
+                return reshaped
+
+        inps = (torch.randn(10, 32),)
+        ep = dynamo_graph_capture_for_export(MyModel())(*inps)
+        self.assertEqual(ep(*inps), MyModel()(*inps))
 
 
 if __name__ == "__main__":
